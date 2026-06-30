@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: makkal-kural-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MONGO_URL
+        value: mongodb+srv://makkaladmin:9deep%40n9@makkal-theervu.nu1smvk.mongodb.net/makkal_kural?retryWrites=true&w=majority
+      - key: DB_NAME
+        value: makkal_kural
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: JWT_SECRET
+        value: makkal-kural-secret-key-2024-tn-governance
