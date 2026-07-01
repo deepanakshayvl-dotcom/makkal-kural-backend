@@ -1554,49 +1554,59 @@ async def get_similar_issues(issue_id: str):
 REPORT_GENERATION_CACHE: Dict[str, bool] = {}
 
 async def _generate_summary_with_llm(district: str, stats: dict, top_descriptions: List[str]) -> Dict[str, str]:
-    """Use EMERGENT_LLM_KEY to generate Tamil + English AI summaries."""
-    summary_en = f"{district} had {stats['total_issues']} issues with {stats['resolved']} resolved this period."
-    summary_ta = f"{district} மாவட்டத்தில் {stats['total_issues']} பிரச்சனைகள் — {stats['resolved']} தீர்க்கப்பட்டன."
+    """Generate Tamil + English AI summaries using Anthropic Claude."""
+    res_rate = round((stats['resolved'] / max(stats['total_issues'], 1)) * 100)
+    summary_en = (
+        f"{district} district currently has {stats['total_issues']} civic issues reported. "
+        f"{stats['resolved']} issues have been resolved ({res_rate}% resolution rate). "
+        f"{stats.get('new_this_week', 0)} new issues were raised this week. "
+        f"{stats['serious']} issues are marked as serious and require urgent attention. "
+        f"Top concerns include: " + ", ".join(d.split(":")[0].strip("- ") for d in top_descriptions[:3] if ":" in d) + "."
+    )
+    summary_ta = (
+        f"{district} மாவட்டத்தில் தற்போது {stats['total_issues']} குடிமக்கள் பிரச்சனைகள் பதிவாகியுள்ளன. "
+        f"{stats['resolved']} பிரச்சனைகள் தீர்க்கப்பட்டுள்ளன ({res_rate}% தீர்வு விகிதம்). "
+        f"இந்த வாரம் {stats.get('new_this_week', 0)} புதிய பிரச்சனைகள் பதிவாயின. "
+        f"{stats['serious']} பிரச்சனைகள் தீவிரமானவை மற்றும் உடனடி கவனிப்பு தேவை."
+    )
 
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return {"summary_en": summary_en, "summary_ta": summary_ta}
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        res_rate = round((stats['resolved'] / max(stats['total_issues'], 1)) * 100)
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=api_key)
 
-        en_chat = LlmChat(
-            api_key=api_key,
-            session_id=str(uuid.uuid4()),
-            system_message="You are an objective civic-governance analyst. Write factually and concisely."
-        ).with_model("openai", "gpt-4o-mini")
         en_prompt = (
             f"Write a 3-paragraph governance accountability report for {district} district, Tamil Nadu.\n"
-            f"Stats: {stats['total_issues']} total, {stats['resolved']} resolved ({res_rate}%), "
-            f"{stats['serious']} serious, {stats['new_this_week']} new this week.\n"
+            f"Stats: {stats['total_issues']} total issues, {stats['resolved']} resolved ({res_rate}%), "
+            f"{stats['serious']} serious, {stats.get('new_this_week',0)} new this week.\n"
             f"Top issues:\n" + "\n".join(top_descriptions) + "\n"
-            f"Mention if resolution rate is improving or declining. Keep under 200 words."
+            f"Mention if resolution rate is improving or declining. Keep under 200 words. Be objective and factual."
         )
-        en_resp = await en_chat.send_message(UserMessage(text=en_prompt))
-        if en_resp:
-            summary_en = str(en_resp).strip()
+        en_msg = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            system="You are an objective civic-governance analyst. Write factually and concisely.",
+            messages=[{"role": "user", "content": en_prompt}]
+        )
+        summary_en = en_msg.content[0].text.strip()
 
-        ta_chat = LlmChat(
-            api_key=api_key,
-            session_id=str(uuid.uuid4()),
-            system_message="நீங்கள் நிர்வாக பகுப்பாய்வாளர். தமிழில் தெளிவாக எழுதவும்."
-        ).with_model("openai", "gpt-4o-mini")
         ta_prompt = (
             f"{district} மாவட்டத்திற்கான வாராந்திர நிர்வாக அறிக்கையை தமிழில் எழுதவும்.\n"
-            f"புள்ளிவிவரங்கள்: {stats['total_issues']} மொத்தம், {stats['resolved']} தீர்க்கப்பட்டவை ({res_rate}%), "
-            f"{stats['serious']} தீவிரமானவை.\n"
+            f"புள்ளிவிவரங்கள்: மொத்தம் {stats['total_issues']}, தீர்க்கப்பட்டவை {stats['resolved']} ({res_rate}%), "
+            f"தீவிரமானவை {stats['serious']}.\n"
             f"முக்கிய பிரச்சனைகள்:\n" + "\n".join(top_descriptions) + "\n"
-            f"200 வார்த்தைகளுக்குள் எழுதவும்."
+            f"3 பத்திகளில் 200 வார்த்தைகளுக்குள் எழுதவும்."
         )
-        ta_resp = await ta_chat.send_message(UserMessage(text=ta_prompt))
-        if ta_resp:
-            summary_ta = str(ta_resp).strip()
+        ta_msg = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            system="நீங்கள் நிர்வாக பகுப்பாய்வாளர். தமிழில் தெளிவாக எழுதவும்.",
+            messages=[{"role": "user", "content": ta_prompt}]
+        )
+        summary_ta = ta_msg.content[0].text.strip()
     except Exception as e:
         logger.error(f"[Report AI error] {e}")
 
@@ -2183,26 +2193,33 @@ Always end with a specific actionable next step."""
 
 @api_router.post("/ai/chat")
 async def makkal_kural_ai_chat(req: AIChatRequest):
-    """Makkal Kural AI civic assistant. Multi-turn conversation via session_id."""
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    """Makkal Kural AI civic assistant powered by Claude."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="AI service not configured")
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=req.session_id,
-            system_message=MAKKAL_KURAL_AI_SYSTEM,
-        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=api_key)
 
-        # Pass language hint with user message
-        lang_hint = "[User language: Tamil — respond in Tamil]" if req.language == "ta" else "[User language: English]"
+        lang_hint = "[User language: Tamil — respond primarily in Tamil]" if req.language == "ta" else "[User language: English — respond in English]"
         full_msg = f"{lang_hint}\n\n{req.message}"
-        resp = await chat.send_message(UserMessage(text=full_msg))
-        reply = str(resp).strip() if resp else ""
 
-        # Persist the exchange (privacy: anonymized, can be deleted)
+        # Build history for multi-turn
+        history_msgs = []
+        for h in (req.history or [])[-10:]:  # last 10 turns
+            if h.get("role") in ("user", "assistant") and h.get("content"):
+                history_msgs.append({"role": h["role"], "content": h["content"]})
+        history_msgs.append({"role": "user", "content": full_msg})
+
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=500,
+            system=MAKKAL_KURAL_AI_SYSTEM,
+            messages=history_msgs,
+        )
+        reply = response.content[0].text.strip()
+
         await db.ai_chat_log.insert_one({
             "id": str(uuid.uuid4()),
             "session_id": req.session_id,
@@ -2215,19 +2232,7 @@ async def makkal_kural_ai_chat(req: AIChatRequest):
         return {"success": True, "reply": reply, "session_id": req.session_id}
     except Exception as e:
         logger.error(f"[AI chat error] {e}")
-        # Try fallback to gpt-4o-mini if Claude fails
-        try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
-            chat = LlmChat(
-                api_key=api_key,
-                session_id=req.session_id,
-                system_message=MAKKAL_KURAL_AI_SYSTEM,
-            ).with_model("openai", "gpt-4o-mini")
-            resp = await chat.send_message(UserMessage(text=req.message))
-            return {"success": True, "reply": str(resp).strip(), "session_id": req.session_id, "fallback": True}
-        except Exception as e2:
-            logger.error(f"[AI fallback error] {e2}")
-            raise HTTPException(status_code=500, detail="AI temporarily unavailable")
+        raise HTTPException(status_code=500, detail="AI temporarily unavailable")
 
 
 # Include router
