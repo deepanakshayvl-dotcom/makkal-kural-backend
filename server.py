@@ -1586,7 +1586,7 @@ async def _generate_summary_with_llm(district: str, stats: dict, top_description
             f"Mention if resolution rate is improving or declining. Keep under 200 words. Be objective and factual."
         )
         en_msg = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-3-5-haiku-20241022",
             max_tokens=400,
             system="You are an objective civic-governance analyst. Write factually and concisely.",
             messages=[{"role": "user", "content": en_prompt}]
@@ -1601,7 +1601,7 @@ async def _generate_summary_with_llm(district: str, stats: dict, top_description
             f"3 பத்திகளில் 200 வார்த்தைகளுக்குள் எழுதவும்."
         )
         ta_msg = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-3-5-haiku-20241022",
             max_tokens=400,
             system="நீங்கள் நிர்வாக பகுப்பாய்வாளர். தமிழில் தெளிவாக எழுதவும்.",
             messages=[{"role": "user", "content": ta_prompt}]
@@ -2213,7 +2213,7 @@ async def makkal_kural_ai_chat(req: AIChatRequest):
         history_msgs.append({"role": "user", "content": full_msg})
 
         response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-3-5-haiku-20241022",
             max_tokens=500,
             system=MAKKAL_KURAL_AI_SYSTEM,
             messages=history_msgs,
@@ -2231,8 +2231,8 @@ async def makkal_kural_ai_chat(req: AIChatRequest):
 
         return {"success": True, "reply": reply, "session_id": req.session_id}
     except Exception as e:
-        logger.error(f"[AI chat error] {e}")
-        raise HTTPException(status_code=500, detail="AI temporarily unavailable")
+        logger.error(f"[AI chat error] {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"AI error: {type(e).__name__}")
 
 
 # Include router
